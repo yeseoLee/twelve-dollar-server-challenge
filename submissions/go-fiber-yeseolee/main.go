@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -61,13 +62,17 @@ func parsePostID(raw string) (int64, error) {
 	return id, nil
 }
 
+type postReq struct {
+	Body any `json:"body"`
+}
+
 func parsePostBody(raw []byte) (postBody, error) {
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	if !json.Valid(raw) {
 		return "", errors.New("malformed JSON body")
 	}
-	object, _ := value.(map[string]any)
-	body, ok := object["body"].(string)
+	var req postReq
+	_ = json.Unmarshal(raw, &req) // non-object JSON leaves Body nil -> "body is required"
+	body, ok := req.Body.(string)
 	if !ok {
 		return "", errors.New("body is required")
 	}
@@ -81,6 +86,11 @@ func parsePostBody(raw []byte) (postBody, error) {
 		return "", errors.New("body must be at most 500 characters")
 	}
 	return postBody(body), nil
+}
+
+func sendJSON(c *fiber.Ctx, status int, b []byte) error {
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSONCharsetUTF8)
+	return c.Status(status).Send(b)
 }
 
 func newApp(s *store, secret []byte, started time.Time) *fiber.App {
@@ -99,14 +109,23 @@ func newApp(s *store, secret []byte, started time.Time) *fiber.App {
 		if err := s.Health(); err != nil {
 			return c.Status(503).JSON(degradedResponse{"degraded", "unreachable", err.Error()})
 		}
-		return c.JSON(healthResponse{"ok", "ok", int64(time.Since(started) / time.Second)})
+		buf := append(make([]byte, 0, 64), `{"status":"ok","db":"ok","uptime_s":`...)
+		buf = strconv.AppendInt(buf, int64(time.Since(started)/time.Second), 10)
+		return sendJSON(c, 200, append(buf, '}'))
 	})
 	app.Get("/feed", func(c *fiber.Ctx) error {
 		posts, err := s.Feed()
 		if err != nil {
 			return err
 		}
-		return c.JSON(feedResponse{posts})
+		buf := append(make([]byte, 0, 4096), `{"posts":[`...)
+		for i, p := range posts {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			buf = appendPost(buf, p)
+		}
+		return sendJSON(c, 200, append(buf, ']', '}'))
 	})
 	app.Get("/posts/:id", func(c *fiber.Ctx) error {
 		id, err := parsePostID(c.Params("id"))
@@ -117,7 +136,7 @@ func newApp(s *store, secret []byte, started time.Time) *fiber.App {
 		if err != nil {
 			return err
 		}
-		return c.JSON(postResponse{p})
+		return sendJSON(c, 200, append(appendPost(append(make([]byte, 0, 256), `{"post":`...), p), '}'))
 	})
 	app.Post("/posts", func(c *fiber.Ctx) error {
 		actor, err := authenticate(c.Get("Authorization"), secret)
@@ -132,7 +151,7 @@ func newApp(s *store, secret []byte, started time.Time) *fiber.App {
 		if err != nil {
 			return err
 		}
-		return c.Status(201).JSON(postResponse{p})
+		return sendJSON(c, 201, append(appendPost(append(make([]byte, 0, 256), `{"post":`...), p), '}'))
 	})
 	app.Post("/posts/:id/like", func(c *fiber.Ctx) error {
 		actor, err := authenticate(c.Get("Authorization"), secret)
@@ -151,13 +170,19 @@ func newApp(s *store, secret []byte, started time.Time) *fiber.App {
 		if already {
 			status = 200
 		}
-		return c.Status(status).JSON(likeResponse{true, already, id})
+		buf := append(make([]byte, 0, 64), `{"liked":true,"already_liked":`...)
+		buf = strconv.AppendBool(buf, already)
+		buf = append(buf, `,"post_id":`...)
+		buf = strconv.AppendInt(buf, id, 10)
+		return sendJSON(c, status, append(buf, '}'))
 	})
 	app.Use(func(c *fiber.Ctx) error { return c.Status(404).JSON(errorResponse{"not found"}) })
 	return app
 }
 
 func main() {
+	debug.SetGCPercent(400)
+	debug.SetMemoryLimit(1536 << 20)
 	started := time.Now()
 	path, secret := os.Getenv("SQLITE_PATH"), os.Getenv("JWT_SECRET")
 	if path == "" || secret == "" {

@@ -1,8 +1,8 @@
 # Go Fiber submission
 
-This submission runs behind the challenge's Nginx configuration on `127.0.0.1:3000`. HTTP keep-alive connections have a 120-second idle timeout.
+This submission can run behind the challenge's Nginx configuration on `127.0.0.1:3000` or directly on `0.0.0.0:80` (selected by `HOST`/`PORT`; direct mode is faster in local tests). HTTP keep-alive connections have a 120-second idle timeout.
 
-The pinned stack is Go 1.27.3, Fiber v2.52.16, `github.com/mattn/go-sqlite3` v1.14.53, and `github.com/golang-jwt/jwt/v5` v5.3.1. SQLite 3.54.1 compiles from the driver's bundled source with CGO.
+The pinned stack is Go 1.27.3, Fiber v2.52.16, `github.com/mattn/go-sqlite3` v1.14.53. HS256 verification uses the Go standard library (`crypto/hmac`). SQLite 3.54.1 compiles from the driver's bundled source with CGO.
 
 ## Build and run
 
@@ -26,7 +26,7 @@ bash test/run.sh submissions/go-fiber-yeseolee
 
 ## Database behavior
 
-One SQLite connection serializes database operations. WAL mode with `synchronous=NORMAL` provides the required durability setting. Foreign keys and a five-second busy timeout apply to every connection.
+Writes go through one connection and a single writer goroutine that groups concurrent writes into one transaction (every caller is answered only after `COMMIT` returns). Reads use a separate pool of 4 connections with prepared statements. WAL mode with `synchronous=NORMAL` provides the required durability setting. Foreign keys and a five-second busy timeout apply to every connection.
 
 Each request reads current database rows. The feed uses the existing timestamp and ID index, and like counts use the existing post index. No response, query result, or token verification is cached. Each write uses an explicit transaction and commits before the HTTP success response.
 
