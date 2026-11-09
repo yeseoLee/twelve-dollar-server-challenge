@@ -1,6 +1,6 @@
 # Go Fiber submission
 
-This submission can run behind the challenge's Nginx configuration on `127.0.0.1:3000` or directly on `0.0.0.0:80` (selected by `HOST`/`PORT`; direct mode is faster in local tests). HTTP keep-alive connections have a 120-second idle timeout.
+**Mode: direct** (no Nginx): the benchmark sets `HOST=0.0.0.0 PORT=80`. The same binary also works behind the challenge's Nginx on `127.0.0.1:3000` (local tests: direct was ~11% faster). HTTP keep-alive connections have a 120-second idle timeout.
 
 The pinned stack is Go 1.27.3, Fiber v2.52.16, `github.com/mattn/go-sqlite3` v1.14.53. HS256 verification uses the Go standard library (`crypto/hmac`). SQLite 3.54.1 compiles from the driver's bundled source with CGO.
 
